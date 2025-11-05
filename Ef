@@ -1,0 +1,136 @@
+-- LocalScript: exact-text trigger (put in StarterPlayerScripts or StarterCharacterScripts)
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- CONFIG: exact strings to match (dollar sign and commas preserved)
+local ALLOWED_TEXT = {
+    ["$7,500"] = true,
+    ["$10,000"] = true,
+    ["$15,000"] = true,
+    ["$12,500"] = true,
+    ["$20,000"] = true,
+    ["$25,000"] = true,
+    ["$50,000"] = true,
+    ["$100,000"] = true,
+    ["$1,000,000"] = true,
+}
+
+local TRIGGERS = 10
+local TRIGGER_INTERVAL = 0.12
+local TELEPORT_Y_OFFSET = 3
+local DEBOUNCE_SECONDS = 2
+
+-- PATHS (adjust if your hierarchy differs)
+local bank = workspace:WaitForChild("BankRobbery")
+local bankCash = bank:WaitForChild("BankCash")
+local main = bankCash:WaitForChild("Main")
+local moneyLabel = main:WaitForChild("CashBillboard"):WaitForChild("MoneyLabel")
+local prompt = main:WaitForChild("Attachment"):WaitForChild("ProximityPrompt")
+
+-- Helpers
+local function findMoneyLabelCFrame()
+    local parent = moneyLabel.Parent
+    -- If MoneyLabel is inside a BillboardGui, use Adornee if available
+    if parent and parent:IsA("BillboardGui") then
+        local adornee = parent.Adornee
+        if adornee and adornee:IsA("BasePart") then
+            return adornee.CFrame
+        end
+    end
+
+    -- If MoneyLabel is a TextLabel under a part container (common naming), try parent's parent
+    -- Try to find a nearby BasePart in the ancestors
+    local p = moneyLabel
+    for i = 1, 4 do
+        p = p.Parent
+        if not p then break end
+        if p:IsA("BasePart") then
+            return p.CFrame
+        end
+    end
+
+    -- Fallback to prompt's parent part CFrame
+    if prompt and prompt.Parent and prompt.Parent:IsA("BasePart") then
+        return prompt.Parent.CFrame
+    end
+
+    return nil
+end
+
+local function teleportTo(cf)
+    if not cf then return false end
+    local char = player.Character or player.CharacterAdded:Wait()
+    local hrp = char:FindFirstChild("HumanoidRootPart") or char:WaitForChild("HumanoidRootPart")
+    hrp.CFrame = cf * CFrame.new(0, TELEPORT_Y_OFFSET, 0)
+    return true
+end
+
+local function tryTrigger(p)
+    if not p or not p:IsA("ProximityPrompt") then return false end
+    local ok = false
+    -- preferred documented methods (pcall to be safe)
+    pcall(function()
+        p:InputHoldBegin()
+        task.wait(0.03)
+        p:InputHoldEnd()
+        ok = true
+    end)
+    if not ok then
+        pcall(function()
+            if typeof(fireproximityprompt) == "function" then
+                fireproximityprompt(p)
+                ok = true
+            end
+        end)
+    end
+    return ok
+end
+
+-- Main action
+local lastTriggerTime = 0
+local function handleMatch()
+    local now = tick()
+    if now - lastTriggerTime < DEBOUNCE_SECONDS then return end
+    lastTriggerTime = now
+
+    local cf = findMoneyLabelCFrame()
+    if not cf then
+        warn("Could not find MoneyLabel world CFrame. Check object structure.")
+        return
+    end
+
+    if not teleportTo(cf) then
+        warn("Teleport failed.")
+        return
+    end
+
+    task.wait(0.18) -- small delay after teleport
+
+    for i = 1, TRIGGERS do
+        pcall(function()
+            tryTrigger(prompt)
+        end)
+        task.wait(TRIGGER_INTERVAL)
+    end
+end
+
+-- Watch for exact-text matches (reacts on start and on Text changes)
+local function checkNow()
+    local txt = tostring(moneyLabel.Text or "")
+    if ALLOWED_TEXT[txt] then
+        handleMatch()
+    end
+end
+
+-- Initial check (in case label already matches)
+checkNow()
+
+-- Connect changed event (robust: use GetPropertyChangedSignal if available)
+if moneyLabel.GetPropertyChangedSignal then
+    moneyLabel:GetPropertyChangedSignal("Text"):Connect(checkNow)
+else
+    moneyLabel.Changed:Connect(function(prop)
+        if prop == "Text" then checkNow() end
+    end)
+end
